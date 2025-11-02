@@ -56,10 +56,35 @@ python test.py
 
 ## Usage
 
+### Run Streamlit UI (Recommended)
+
+**IMPORTANT:** Always use the conda environment's Python to run Streamlit!
+
+**Command to Run:**
+```bash
+# Windows Command Prompt / PowerShell:
+.\env\python.exe -m streamlit run app.py
+
+# Git Bash:
+./env/python.exe -m streamlit run app.py
+```
+
+**⚠️ DO NOT USE:** `streamlit run app.py` directly - this uses the wrong Python and will cause import errors!
+
+The app will open in your browser with a ChatGPT-like interface where you can:
+- Chat with the AI assistant
+- Copy messages easily
+- See conversation memory status
+- Clear chat history
+
+### Use Python API
+
+You can also use the chat module directly in Python:
+
 ```python
 from src.chatapp.chat import get_chat_response, clear_memory
 
-# Get chat response
+# Get chat response (with memory)
 response = get_chat_response("Hello, how are you?")
 print(response)
 
@@ -79,6 +104,7 @@ ChatApp/
 ├── logs/                 # Application logs
 ├── env/                  # Conda environment (not in git)
 ├── .env                  # Environment variables (not in git)
+├── app.py                # Streamlit UI application
 ├── requirements.txt      # Python dependencies
 └── setup.py             # Package setup
 ```
