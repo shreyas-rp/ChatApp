@@ -13,19 +13,13 @@ A conversational AI chat application built with LangChain and Azure OpenAI.
 ### Prerequisites
 - Python 3.9 or higher
 - Azure OpenAI account with API credentials
+- Conda (for environment management)
 
-### Step 1: Create Virtual Environment
+### Step 1: Create Conda Environment
 
-**Windows:**
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-```
-
-**Linux/Mac:**
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+conda create -p env python=3.9 -y
+conda activate ./env
 ```
 
 ### Step 2: Install Dependencies
@@ -83,7 +77,7 @@ ChatApp/
 │   │   └── logger.py     # Logging utility
 │   └── experiment/       # For experiments/testing
 ├── logs/                 # Application logs
-├── venv/                 # Virtual environment (not in git)
+├── env/                  # Conda environment (not in git)
 ├── .env                  # Environment variables (not in git)
 ├── requirements.txt      # Python dependencies
 └── setup.py             # Package setup
@@ -93,5 +87,5 @@ ChatApp/
 
 - The `.env` file is in `.gitignore` - never commit your API keys
 - Logs are stored in the `logs/` directory
-- Always activate your virtual environment before running the application
+- Always activate your conda environment before running the application: `conda activate ./env`
 
