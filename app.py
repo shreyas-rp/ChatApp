@@ -81,59 +81,60 @@ _ACTIVE_SESSIONS_LOCK = threading.Lock()
 _ACTIVE_SESSIONS = {}
 
 # Restore session from URL token if signed with shared password (prevents spoofing)
+# Priority: session_state (persists) > URL token (if matches session_state)
 try:
     import time as _qt
-    try:
-        _params = st.query_params
-    except Exception:
-        _params = st.experimental_get_query_params()
-    _tok = None
-    _sig = None
-    if isinstance(_params, dict):
-        def _first(v):
-            return v if isinstance(v, str) else (v[0] if isinstance(v, list) and v else None)
-        if "auth" in _params:
-            _tok = _first(_params["auth"])
-        if "sig" in _params:
-            _sig = _first(_params["sig"])
-    if _tok and _sig and auth_cfg.get("shared_password"):
-        expected = hmac.new(
-            key=str(auth_cfg["shared_password"]).encode("utf-8"),
-            msg=str(_tok).encode("utf-8"),
-            digestmod=hashlib.sha256,
-        ).hexdigest()
-        # Token must be signed correctly
-        if hmac.compare_digest(expected, _sig):
-            # Restore session if:
-            # 1. Token is in active sessions (was logged in before), OR
-            # 2. This browser's session_state already has this session_id (same tab refresh)
-            can_restore = False
-            with _ACTIVE_SESSIONS_LOCK:
-                if _tok in _ACTIVE_SESSIONS:
-                    can_restore = True
-                elif st.session_state.get("session_id") == _tok:
-                    # Same browser tab refreshing - allow restore
-                    can_restore = True
-                    _ACTIVE_SESSIONS[_tok] = _qt.time()
-            
-            if can_restore:
-                st.session_state["session_id"] = _tok
-                st.session_state["auth_ok"] = True
-                st.session_state["user"] = st.session_state.get("user", "shared_user")
-                st.session_state["login_ts"] = _qt.time()
-                # Update active sessions timestamp
-                with _ACTIVE_SESSIONS_LOCK:
-                    _ACTIVE_SESSIONS[_tok] = _qt.time()
-            else:
-                # Valid signature but not in active sessions = shared link, don't auto-login
-                # Clear the token from URL to prevent retry
-                try:
+    # First, check if we already have a valid session in session_state (persists across reruns)
+    if st.session_state.get("auth_ok") and st.session_state.get("session_id"):
+        # Session already exists - just register it in active sessions
+        sid = st.session_state.get("session_id")
+        with _ACTIVE_SESSIONS_LOCK:
+            _ACTIVE_SESSIONS[sid] = _qt.time()
+    else:
+        # No existing session - try to restore from URL token
+        try:
+            _params = st.query_params
+        except Exception:
+            _params = st.experimental_get_query_params()
+        _tok = None
+        _sig = None
+        if isinstance(_params, dict):
+            def _first(v):
+                return v if isinstance(v, str) else (v[0] if isinstance(v, list) and v else None)
+            if "auth" in _params:
+                _tok = _first(_params["auth"])
+            if "sig" in _params:
+                _sig = _first(_params["sig"])
+        
+        if _tok and _sig and auth_cfg.get("shared_password"):
+            expected = hmac.new(
+                key=str(auth_cfg["shared_password"]).encode("utf-8"),
+                msg=str(_tok).encode("utf-8"),
+                digestmod=hashlib.sha256,
+            ).hexdigest()
+            # Token must be signed correctly
+            if hmac.compare_digest(expected, _sig):
+                # Only restore if token matches existing session_state.session_id (same browser)
+                # OR if session_state is empty (first load in this browser)
+                existing_sid = st.session_state.get("session_id")
+                if existing_sid == _tok or existing_sid is None:
+                    # Same browser tab - restore session
+                    st.session_state["session_id"] = _tok
+                    st.session_state["auth_ok"] = True
+                    st.session_state["user"] = st.session_state.get("user", "shared_user")
+                    st.session_state["login_ts"] = _qt.time()
+                    # Register in active sessions
+                    with _ACTIVE_SESSIONS_LOCK:
+                        _ACTIVE_SESSIONS[_tok] = _qt.time()
+                else:
+                    # Different session_id = shared link, don't auto-login
                     try:
-                        st.query_params = {}
+                        try:
+                            st.query_params = {}
+                        except Exception:
+                            st.experimental_set_query_params()
                     except Exception:
-                        st.experimental_set_query_params()
-                except Exception:
-                    pass
+                        pass
 except Exception:
     pass
 
