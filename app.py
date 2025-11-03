@@ -71,31 +71,40 @@ if not auth_cfg.get("shared_password"):
 if len(auth_cfg["users"]) > 3:
     auth_cfg["users"] = auth_cfg["users"][:3]
 
-# Restore session from URL token only if it matches an active session
+# Restore session from URL token if signed with shared password (prevents spoofing)
 try:
     import time as _qt
     try:
         _params = st.query_params
     except Exception:
         _params = st.experimental_get_query_params()
-    _token = None
-    if isinstance(_params, dict) and "auth" in _params:
-        _v = _params["auth"]
-        _token = _v if isinstance(_v, str) else (_v[0] if isinstance(_v, list) and _v else None)
-    if _token:
-        # validate against active sessions registry
-        if '_ACTIVE_SESSIONS' in globals():
-            with _ACTIVE_SESSIONS_LOCK:
-                if _token in _ACTIVE_SESSIONS:
-                    st.session_state["session_id"] = _token
-                    st.session_state["auth_ok"] = True
-                    st.session_state["user"] = st.session_state.get("user", "shared_user")
-                    st.session_state["login_ts"] = _qt.time()
+    _tok = None
+    _sig = None
+    if isinstance(_params, dict):
+        def _first(v):
+            return v if isinstance(v, str) else (v[0] if isinstance(v, list) and v else None)
+        if "auth" in _params:
+            _tok = _first(_params["auth"])
+        if "sig" in _params:
+            _sig = _first(_params["sig"])
+    if _tok and _sig and auth_cfg.get("shared_password"):
+        expected = hmac.new(
+            key=str(auth_cfg["shared_password"]).encode("utf-8"),
+            msg=str(_tok).encode("utf-8"),
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+        if hmac.compare_digest(expected, _sig):
+            st.session_state["session_id"] = _tok
+            st.session_state["auth_ok"] = True
+            st.session_state["user"] = st.session_state.get("user", "shared_user")
+            st.session_state["login_ts"] = _qt.time()
 except Exception:
     pass
 
 # ---------------- Concurrency limit: at most 2 active sessions ----------------
 import time as _rt
+import hmac
+import hashlib
 import uuid
 import threading
 
@@ -180,13 +189,18 @@ def render_login():
             st.session_state["user"] = "shared_user"
             st.session_state["login_ts"] = time.time()
             _touch_session()  # Register session immediately
-            # persist token in URL for refresh; validated on restore
+            # Persist signed token in URL (auth=token, sig=hmac) to survive refresh
             try:
-                _tok = st.session_state.get("session_id")
+                _tok = st.session_state.get("session_id") or ""
+                _sig = hmac.new(
+                    key=str(auth_cfg["shared_password"]).encode("utf-8"),
+                    msg=str(_tok).encode("utf-8"),
+                    digestmod=hashlib.sha256,
+                ).hexdigest()
                 try:
-                    st.query_params = {"auth": _tok}
+                    st.query_params = {"auth": _tok, "sig": _sig}
                 except Exception:
-                    st.experimental_set_query_params(auth=_tok)
+                    st.experimental_set_query_params(auth=_tok, sig=_sig)
             except Exception:
                 pass
             st.success("Login successful")
