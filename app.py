@@ -2,6 +2,11 @@ import streamlit as st
 import os
 import base64
 import json
+import hmac
+import hashlib
+import time as _rt
+import uuid
+import threading
 from dotenv import load_dotenv
 from src.chatapp.chat import get_chat_response, clear_memory, conversation_chain, get_memory_messages
 from src.chatapp.logger import logging
@@ -71,6 +76,10 @@ if not auth_cfg.get("shared_password"):
 if len(auth_cfg["users"]) > 3:
     auth_cfg["users"] = auth_cfg["users"][:3]
 
+# ---------------- Concurrency limit: at most 2 active sessions ----------------
+_ACTIVE_SESSIONS_LOCK = threading.Lock()
+_ACTIVE_SESSIONS = {}
+
 # Restore session from URL token if signed with shared password (prevents spoofing)
 try:
     import time as _qt
@@ -98,18 +107,11 @@ try:
             st.session_state["auth_ok"] = True
             st.session_state["user"] = st.session_state.get("user", "shared_user")
             st.session_state["login_ts"] = _qt.time()
+            # Register session in active sessions
+            with _ACTIVE_SESSIONS_LOCK:
+                _ACTIVE_SESSIONS[_tok] = _qt.time()
 except Exception:
     pass
-
-# ---------------- Concurrency limit: at most 2 active sessions ----------------
-import time as _rt
-import hmac
-import hashlib
-import uuid
-import threading
-
-_ACTIVE_SESSIONS_LOCK = threading.Lock()
-_ACTIVE_SESSIONS = {}
 
 def _prune_sessions():
     now = _rt.time()
@@ -152,9 +154,23 @@ def is_authenticated() -> bool:
         if login_ts:
             import time
             if (time.time() - login_ts) > auth_cfg["session_minutes"] * 60:
+                # Clear session on expiry
+                try:
+                    _remove_session()
+                except Exception:
+                    pass
                 st.session_state.clear()
                 st.warning("Session expired. Please login again.")
                 return False
+        # Ensure session is registered in active sessions
+        sid = st.session_state.get("session_id")
+        if sid:
+            try:
+                with _ACTIVE_SESSIONS_LOCK:
+                    if sid not in _ACTIVE_SESSIONS:
+                        _ACTIVE_SESSIONS[sid] = _rt.time()
+            except Exception:
+                pass
         return True
     return False
 
