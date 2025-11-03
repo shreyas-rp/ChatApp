@@ -80,18 +80,14 @@ if len(auth_cfg["users"]) > 3:
 _ACTIVE_SESSIONS_LOCK = threading.Lock()
 _ACTIVE_SESSIONS = {}
 
-# Restore session from URL token if signed with shared password (prevents spoofing)
-# Priority: session_state (persists) > URL token (if matches session_state)
+# Restore session: session_state persists across reruns, so auth_ok should remain
+# On refresh, if session_state["auth_ok"] exists, we're already logged in
+# Only restore from URL token if session_state is empty AND token matches a registered session
 try:
     import time as _qt
-    # First, check if we already have a valid session in session_state (persists across reruns)
-    if st.session_state.get("auth_ok") and st.session_state.get("session_id"):
-        # Session already exists - just register it in active sessions
-        sid = st.session_state.get("session_id")
-        with _ACTIVE_SESSIONS_LOCK:
-            _ACTIVE_SESSIONS[sid] = _qt.time()
-    else:
-        # No existing session - try to restore from URL token
+    # If session_state already has auth_ok, we're logged in (persists across reruns)
+    if not st.session_state.get("auth_ok"):
+        # No session - try to restore from URL token
         try:
             _params = st.query_params
         except Exception:
@@ -112,30 +108,33 @@ try:
                 msg=str(_tok).encode("utf-8"),
                 digestmod=hashlib.sha256,
             ).hexdigest()
-            # Token must be signed correctly
+            # Token must be signed correctly AND exist in active sessions (proves it was logged in before)
             if hmac.compare_digest(expected, _sig):
-                # Only restore if token matches existing session_state.session_id (same browser refresh)
-                # NEVER auto-login on first visit (existing_sid is None)
-                existing_sid = st.session_state.get("session_id")
-                if existing_sid == _tok:
-                    # Same browser tab refreshing - restore session
-                    st.session_state["session_id"] = _tok
-                    st.session_state["auth_ok"] = True
-                    st.session_state["user"] = st.session_state.get("user", "shared_user")
-                    st.session_state["login_ts"] = _qt.time()
-                    # Register in active sessions
-                    with _ACTIVE_SESSIONS_LOCK:
-                        _ACTIVE_SESSIONS[_tok] = _qt.time()
-                else:
-                    # First visit (existing_sid is None) OR different session_id = shared link
-                    # Don't auto-login - ask for password
-                    try:
+                with _ACTIVE_SESSIONS_LOCK:
+                    # Only restore if token is in active sessions (was logged in before)
+                    if _tok in _ACTIVE_SESSIONS:
+                        # Valid token from previous login - restore session
+                        st.session_state["session_id"] = _tok
+                        st.session_state["auth_ok"] = True
+                        st.session_state["user"] = st.session_state.get("user", "shared_user")
+                        st.session_state["login_ts"] = _qt.time()
+                        _ACTIVE_SESSIONS[_tok] = _qt.time()  # Update timestamp
+                    else:
+                        # Token valid but not in active sessions = shared link or expired
+                        # Clear URL params and ask for password
                         try:
-                            st.query_params = {}
+                            try:
+                                st.query_params = {}
+                            except Exception:
+                                st.experimental_set_query_params()
                         except Exception:
-                            st.experimental_set_query_params()
-                    except Exception:
-                        pass
+                            pass
+    else:
+        # Session exists - register it in active sessions
+        sid = st.session_state.get("session_id")
+        if sid:
+            with _ACTIVE_SESSIONS_LOCK:
+                _ACTIVE_SESSIONS[sid] = _qt.time()
 except Exception:
     pass
 
