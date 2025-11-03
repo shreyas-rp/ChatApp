@@ -10,6 +10,23 @@ import traceback
 # Load environment variables
 load_dotenv()
 
+# Read config helper: use Streamlit Secrets first (Cloud), fallback to .env (local)
+def get_cfg(key: str, default: str | None = None):
+    try:
+        # flat key in secrets (preferred on Cloud)
+        if key in st.secrets:
+            return st.secrets.get(key, default)
+        # allow nested tables, e.g., st.secrets["auth"][key]
+        for k, v in getattr(st, "secrets", {}).items():
+            try:
+                if isinstance(v, dict) and key in v:
+                    return v.get(key, default)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
 # ---------------- Security: Simple Auth Gate (limit to 3 users) ----------------
 # Expected in Streamlit Secrets (Deploy → App settings → Secrets):
 # [auth]
@@ -209,9 +226,9 @@ except Exception:
 # Check if environment variables are set
 def check_env_variables():
     """Check if required environment variables are set"""
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+    api_key = get_cfg("AZURE_OPENAI_API_KEY")
+    endpoint = get_cfg("AZURE_OPENAI_ENDPOINT")
+    api_version = get_cfg("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
     
     missing = []
     if not api_key or api_key == "your_azure_openai_api_key_here":
