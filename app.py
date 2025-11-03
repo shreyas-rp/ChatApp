@@ -102,7 +102,8 @@ try:
             msg=str(_tok).encode("utf-8"),
             digestmod=hashlib.sha256,
         ).hexdigest()
-        if hmac.compare_digest(expected, _sig):
+        # Token must be signed AND already registered as an active session
+        if hmac.compare_digest(expected, _sig) and _tok in _ACTIVE_SESSIONS:
             st.session_state["session_id"] = _tok
             st.session_state["auth_ok"] = True
             st.session_state["user"] = st.session_state.get("user", "shared_user")
@@ -110,14 +111,6 @@ try:
             # Register session in active sessions
             with _ACTIVE_SESSIONS_LOCK:
                 _ACTIVE_SESSIONS[_tok] = _qt.time()
-            # Immediately remove auth params from URL to prevent sharing auto-login links
-            try:
-                try:
-                    st.query_params = {}
-                except Exception:
-                    st.experimental_set_query_params()
-            except Exception:
-                pass
 except Exception:
     pass
 
