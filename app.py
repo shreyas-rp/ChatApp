@@ -114,11 +114,11 @@ try:
             ).hexdigest()
             # Token must be signed correctly
             if hmac.compare_digest(expected, _sig):
-                # Only restore if token matches existing session_state.session_id (same browser)
-                # OR if session_state is empty (first load in this browser)
+                # Only restore if token matches existing session_state.session_id (same browser refresh)
+                # NEVER auto-login on first visit (existing_sid is None)
                 existing_sid = st.session_state.get("session_id")
-                if existing_sid == _tok or existing_sid is None:
-                    # Same browser tab - restore session
+                if existing_sid == _tok:
+                    # Same browser tab refreshing - restore session
                     st.session_state["session_id"] = _tok
                     st.session_state["auth_ok"] = True
                     st.session_state["user"] = st.session_state.get("user", "shared_user")
@@ -127,7 +127,8 @@ try:
                     with _ACTIVE_SESSIONS_LOCK:
                         _ACTIVE_SESSIONS[_tok] = _qt.time()
                 else:
-                    # Different session_id = shared link, don't auto-login
+                    # First visit (existing_sid is None) OR different session_id = shared link
+                    # Don't auto-login - ask for password
                     try:
                         try:
                             st.query_params = {}
