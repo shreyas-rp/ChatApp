@@ -32,18 +32,41 @@ from typing import Optional
 # Load environment variables (for local)
 load_dotenv()
 
-# Read configuration with priority: Streamlit Secrets (if available) -> .env
-_secrets = {}
-try:
-    import streamlit as st
-    if hasattr(st, "secrets"):
-        _secrets = dict(st.secrets)
-except Exception:
-    pass
-
 def _get_cfg(key: str, default: Optional[str] = None) -> Optional[str]:
-    if key in _secrets:
-        return _secrets.get(key, default)
+    """Read config: Streamlit Secrets (Cloud) -> .env (local)"""
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            # Try direct access (flat keys at top level)
+            try:
+                val = st.secrets.get(key)
+                if val:
+                    return str(val) if val else None
+            except (KeyError, AttributeError):
+                pass
+            
+            # Try nested tables (e.g., st.secrets["auth"]["shared_password"])
+            try:
+                for section_name, section in st.secrets.items():
+                    if isinstance(section, dict):
+                        if key in section:
+                            val = section.get(key)
+                            if val:
+                                return str(val) if val else None
+            except (AttributeError, TypeError):
+                pass
+            
+            # Also try direct dict-like access
+            try:
+                if key in dict(st.secrets):
+                    val = dict(st.secrets)[key]
+                    if val:
+                        return str(val) if val else None
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # Fallback to environment variable
     return os.getenv(key, default)
 
 # Initialize LLM lazily (when first needed, not at import time)
