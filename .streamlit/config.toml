@@ -1,5 +1,6 @@
 [server]
 headless = false
+cookieSecret = "a2f6c9d1e4b7-keep-session-stable-5c8e2a1f7d3b"
 
 [browser]
 gatherUsageStats = false
@@ -8,4 +9,5 @@ serverAddress = "localhost"
 [runner]
 magicEnabled = true
 fastReruns = true
+enforceSerializableSessionState = false
 

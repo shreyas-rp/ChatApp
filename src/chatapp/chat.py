@@ -29,39 +29,64 @@ except ImportError:
 from langchain.chains import ConversationChain
 from langchain.prompts import PromptTemplate
 
-# Load environment variables
+# Load environment variables (for local)
 load_dotenv()
 
-# Access the environment variables
-api_key = os.getenv("AZURE_OPENAI_API_KEY")
-api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
-endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+# Read configuration with priority: Streamlit Secrets (if available) -> .env
+_secrets = {}
+try:
+    import streamlit as st  # available in Streamlit runtime
+    if hasattr(st, "secrets"):
+        # st.secrets behaves like a dict-like object
+        _secrets = dict(st.secrets)
+except Exception:
+    # Not running under Streamlit or secrets not configured
+    _secrets = {}
 
-# Validate environment variables
+from typing import Optional
+
+def _get_cfg(key: str, default: Optional[str] = None) -> Optional[str]:
+    # First from secrets (flat or nested), then from env
+    if key in _secrets:
+        return _secrets.get(key, default)
+    # Support nested [auth] etc., but our Azure keys are top-level
+    return os.getenv(key, default)
+
+# Access configuration values
+api_key = _get_cfg("AZURE_OPENAI_API_KEY")
+api_version = _get_cfg("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+endpoint = _get_cfg("AZURE_OPENAI_ENDPOINT")
+deployment = _get_cfg("AZURE_OPENAI_DEPLOYMENT")  # optional, not strictly needed here
+
+# Validate configuration
 if not api_key:
-    raise ValueError("AZURE_OPENAI_API_KEY not found in environment variables. Please check your .env file.")
+    raise ValueError(
+        "AZURE_OPENAI_API_KEY not found. Set it in Streamlit Secrets or .env."
+    )
 if not endpoint:
-    raise ValueError("AZURE_OPENAI_ENDPOINT not found in environment variables. Please check your .env file.")
+    raise ValueError(
+        "AZURE_OPENAI_ENDPOINT not found. Set it in Streamlit Secrets or .env."
+    )
 
 # Initialize the LLM with error handling
 try:
     llm = AzureChatOpenAI(
-        model_name="gpt-4o",
+        model_name="gpt-4o",  # use your deployment's model; Azure will route via endpoint/deployment
         azure_endpoint=endpoint,
         api_key=api_key,
         api_version=api_version,
-        temperature=0.7,  # Add some creativity for chat
-        timeout=30  # Add timeout for connection
+        temperature=0.7,
+        timeout=30
     )
 except Exception as e:
     # Don't expose endpoint or API key in error messages
     error_msg = str(e).lower()
     if "endpoint" in error_msg:
-        raise ConnectionError("Failed to initialize AI client. Please check your endpoint configuration in the .env file.")
+        raise ConnectionError("Failed to initialize AI client. Please check your endpoint configuration (Secrets/.env).")
     elif "api key" in error_msg or "key" in error_msg:
-        raise ConnectionError("Failed to initialize AI client. Please check your API key in the .env file.")
+        raise ConnectionError("Failed to initialize AI client. Please check your API key (Secrets/.env).")
     else:
-        raise ConnectionError("Failed to initialize AI client. Please verify your configuration.")
+        raise ConnectionError("Failed to initialize AI client. Please verify your configuration (Secrets/.env).")
 
 # Create a normal chat prompt template
 normal_chat_template = """The following is a friendly conversation between a human and an AI assistant. 

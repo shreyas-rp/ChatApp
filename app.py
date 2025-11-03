@@ -10,6 +10,202 @@ import traceback
 # Load environment variables
 load_dotenv()
 
+# ---------------- Security: Simple Auth Gate (limit to 3 users) ----------------
+# Expected in Streamlit Secrets (Deploy → App settings → Secrets):
+# [auth]
+# users = ["user1", "user2", "user3"]
+# passwords = {"user1": "pass1", "user2": "pass2", "user3": "pass3"}
+# session_minutes = 60
+# rate_limit_per_min = 20
+
+auth_cfg = {
+    "users": [],
+    "passwords": {},
+    "shared_password": None,
+    "session_minutes": 60,
+}
+try:
+    # Prefer nested [auth] table
+    if "auth" in st.secrets:
+        sec = st.secrets["auth"]
+        auth_cfg["users"] = list(sec.get("users", []))
+        auth_cfg["passwords"] = dict(sec.get("passwords", {}))
+        auth_cfg["shared_password"] = sec.get("shared_password")
+        auth_cfg["session_minutes"] = int(sec.get("session_minutes", 60))
+    else:
+        # Also support flat secrets keys
+        flat = st.secrets
+        if "shared_password" in flat:
+            auth_cfg["shared_password"] = flat.get("shared_password")
+        if "session_minutes" in flat:
+            auth_cfg["session_minutes"] = int(flat.get("session_minutes", 60))
+except Exception:
+    pass
+
+# Fallback to environment variables if secrets missing
+if not auth_cfg.get("shared_password"):
+    env_sp = os.getenv("SHARED_PASSWORD")
+    if env_sp:
+        auth_cfg["shared_password"] = env_sp
+
+# (moved earlier) Concurrency helpers defined above
+
+# Enforce max 3 users
+if len(auth_cfg["users"]) > 3:
+    auth_cfg["users"] = auth_cfg["users"][:3]
+
+# Restore session from query params token on refresh (persist login across reloads)
+try:
+    import time as _qt
+    try:
+        params = st.query_params  # Streamlit >=1.30
+    except Exception:
+        params = st.experimental_get_query_params()
+    token = None
+    if isinstance(params, dict):
+        if "auth" in params:
+            v = params["auth"]
+            token = v if isinstance(v, str) else (v[0] if isinstance(v, list) and v else None)
+    if token:
+        st.session_state["session_id"] = token
+        st.session_state["auth_ok"] = True
+        st.session_state["user"] = st.session_state.get("user", "shared_user")
+        st.session_state["login_ts"] = _qt.time()
+except Exception:
+    pass
+
+# ---------------- Concurrency limit: at most 2 active sessions ----------------
+import time as _rt
+import uuid
+import threading
+
+_ACTIVE_SESSIONS_LOCK = threading.Lock()
+_ACTIVE_SESSIONS = {}
+
+def _prune_sessions():
+    now = _rt.time()
+    ttl = max(5 * 60, auth_cfg.get("session_minutes", 60) * 60)
+    stale = [sid for sid, ts in _ACTIVE_SESSIONS.items() if (now - ts) > ttl]
+    for sid in stale:
+        _ACTIVE_SESSIONS.pop(sid, None)
+
+def _ensure_session_id():
+    if "session_id" not in st.session_state:
+        st.session_state["session_id"] = str(uuid.uuid4())
+    return st.session_state["session_id"]
+
+def _touch_session():
+    sid = _ensure_session_id()
+    with _ACTIVE_SESSIONS_LOCK:
+        _prune_sessions()
+        _ACTIVE_SESSIONS[sid] = _rt.time()
+
+def _remove_session():
+    sid = st.session_state.get("session_id")
+    if not sid:
+        return
+    with _ACTIVE_SESSIONS_LOCK:
+        _ACTIVE_SESSIONS.pop(sid, None)
+
+def _can_login_with_concurrency_limit(max_sessions: int = 2) -> bool:
+    # If this session already registered, allow
+    sid = st.session_state.get("session_id")
+    with _ACTIVE_SESSIONS_LOCK:
+        _prune_sessions()
+        if sid and sid in _ACTIVE_SESSIONS:
+            return True
+        return len(_ACTIVE_SESSIONS) < max_sessions
+
+def is_authenticated() -> bool:
+    if st.session_state.get("auth_ok"):
+        # Session expiry
+        login_ts = st.session_state.get("login_ts")
+        if login_ts:
+            import time
+            if (time.time() - login_ts) > auth_cfg["session_minutes"] * 60:
+                st.session_state.clear()
+                st.warning("Session expired. Please login again.")
+                return False
+        return True
+    return False
+
+def render_login():
+    st.markdown("<div style='height: 1rem'></div>", unsafe_allow_html=True)
+    st.subheader("🔐 Secure Access")
+    if not auth_cfg.get("shared_password"):
+        st.error("Shared password not configured. Set [auth].shared_password in Secrets.")
+        return
+
+    with st.form("login_form_shared", clear_on_submit=False):
+        password = st.text_input("Password", type="password")
+        col1, col2 = st.columns([1,1])
+        with col1:
+            submitted = st.form_submit_button("Login")
+        with col2:
+            reset_clicked = st.form_submit_button("Reset sessions")
+
+    if reset_clicked:
+        try:
+            with _ACTIVE_SESSIONS_LOCK:
+                _ACTIVE_SESSIONS.clear()
+            st.success("Active sessions reset. Try logging in now.")
+        except Exception:
+            st.warning("Could not reset sessions.")
+
+    if submitted:
+        # Concurrency check (max 2)
+        if password == auth_cfg["shared_password"] and _can_login_with_concurrency_limit():
+            import time
+            st.session_state["auth_ok"] = True
+            st.session_state["user"] = "shared_user"
+            st.session_state["login_ts"] = time.time()
+            _touch_session()  # Register session immediately
+            # Persist token in URL query params to survive refresh
+            try:
+                token = st.session_state.get("session_id")
+                try:
+                    st.query_params = {"auth": token}  # new API
+                except Exception:
+                    st.experimental_set_query_params(auth=token)
+            except Exception:
+                pass
+            st.success("Login successful")
+            st.rerun()
+        else:
+            st.error("Invalid password or maximum concurrent users reached")
+
+if not is_authenticated():
+    render_login()
+    st.stop()
+
+# Logout control in sidebar
+with st.sidebar:
+    if st.button("🚪 Logout", use_container_width=True):
+        try:
+            _remove_session()
+        finally:
+            # Clear auth token from URL so refresh doesn't auto-login
+            try:
+                try:
+                    st.query_params = {}
+                except Exception:
+                    st.experimental_set_query_params()
+            except Exception:
+                pass
+            st.session_state.clear()
+        st.rerun()
+
+# Mark activity for concurrency tracking when authenticated
+try:
+    if is_authenticated():
+        _touch_session()
+except Exception:
+    pass
+
+# Rate limiting removed per user request
+
+
+
 # Check if environment variables are set
 def check_env_variables():
     """Check if required environment variables are set"""
@@ -39,7 +235,7 @@ st.markdown("""
     /* Hide streamlit branding completely */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    /* Keep header visible so the sidebar toggle is accessible */
     .stDeployButton {display: none;}
     
     /* Global body styling */

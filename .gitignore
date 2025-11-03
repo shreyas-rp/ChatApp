@@ -149,6 +149,9 @@ dist/
 .env.local
 secrets.json
 
+# Streamlit secrets (local testing only - use Streamlit Cloud Secrets for deployment)
+.streamlit/secrets.toml
+
 # Temporary files
 *.tmp
 *.bak
