@@ -110,6 +110,14 @@ try:
             # Register session in active sessions
             with _ACTIVE_SESSIONS_LOCK:
                 _ACTIVE_SESSIONS[_tok] = _qt.time()
+            # Immediately remove auth params from URL to prevent sharing auto-login links
+            try:
+                try:
+                    st.query_params = {}
+                except Exception:
+                    st.experimental_set_query_params()
+            except Exception:
+                pass
 except Exception:
     pass
 
