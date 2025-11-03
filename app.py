@@ -102,15 +102,38 @@ try:
             msg=str(_tok).encode("utf-8"),
             digestmod=hashlib.sha256,
         ).hexdigest()
-        # Token must be signed AND already registered as an active session
-        if hmac.compare_digest(expected, _sig) and _tok in _ACTIVE_SESSIONS:
-            st.session_state["session_id"] = _tok
-            st.session_state["auth_ok"] = True
-            st.session_state["user"] = st.session_state.get("user", "shared_user")
-            st.session_state["login_ts"] = _qt.time()
-            # Register session in active sessions
+        # Token must be signed correctly
+        if hmac.compare_digest(expected, _sig):
+            # Restore session if:
+            # 1. Token is in active sessions (was logged in before), OR
+            # 2. This browser's session_state already has this session_id (same tab refresh)
+            can_restore = False
             with _ACTIVE_SESSIONS_LOCK:
-                _ACTIVE_SESSIONS[_tok] = _qt.time()
+                if _tok in _ACTIVE_SESSIONS:
+                    can_restore = True
+                elif st.session_state.get("session_id") == _tok:
+                    # Same browser tab refreshing - allow restore
+                    can_restore = True
+                    _ACTIVE_SESSIONS[_tok] = _qt.time()
+            
+            if can_restore:
+                st.session_state["session_id"] = _tok
+                st.session_state["auth_ok"] = True
+                st.session_state["user"] = st.session_state.get("user", "shared_user")
+                st.session_state["login_ts"] = _qt.time()
+                # Update active sessions timestamp
+                with _ACTIVE_SESSIONS_LOCK:
+                    _ACTIVE_SESSIONS[_tok] = _qt.time()
+            else:
+                # Valid signature but not in active sessions = shared link, don't auto-login
+                # Clear the token from URL to prevent retry
+                try:
+                    try:
+                        st.query_params = {}
+                    except Exception:
+                        st.experimental_set_query_params()
+                except Exception:
+                    pass
 except Exception:
     pass
 
