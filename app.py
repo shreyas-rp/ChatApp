@@ -71,25 +71,8 @@ if not auth_cfg.get("shared_password"):
 if len(auth_cfg["users"]) > 3:
     auth_cfg["users"] = auth_cfg["users"][:3]
 
-# Restore session from query params token on refresh (persist login across reloads)
-try:
-    import time as _qt
-    try:
-        params = st.query_params  # Streamlit >=1.30
-    except Exception:
-        params = st.experimental_get_query_params()
-    token = None
-    if isinstance(params, dict):
-        if "auth" in params:
-            v = params["auth"]
-            token = v if isinstance(v, str) else (v[0] if isinstance(v, list) and v else None)
-    if token:
-        st.session_state["session_id"] = token
-        st.session_state["auth_ok"] = True
-        st.session_state["user"] = st.session_state.get("user", "shared_user")
-        st.session_state["login_ts"] = _qt.time()
-except Exception:
-    pass
+# Don't restore from URL token - require fresh login for security
+# Token in URL can be shared/guessed, so we require password each time
 
 # ---------------- Concurrency limit: at most 2 active sessions ----------------
 import time as _rt
@@ -177,15 +160,6 @@ def render_login():
             st.session_state["user"] = "shared_user"
             st.session_state["login_ts"] = time.time()
             _touch_session()  # Register session immediately
-            # Persist token in URL query params to survive refresh
-            try:
-                token = st.session_state.get("session_id")
-                try:
-                    st.query_params = {"auth": token}  # new API
-                except Exception:
-                    st.experimental_set_query_params(auth=token)
-            except Exception:
-                pass
             st.success("Login successful")
             st.rerun()
         else:
